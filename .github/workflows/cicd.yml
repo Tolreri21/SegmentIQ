@@ -29,4 +29,3 @@ jobs:
 
       - name: check code format
         run: uv run ruff format --check
-

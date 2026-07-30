@@ -220,5 +220,6 @@ __marimo__/
 # SegmentIQ: датасеты и артефакты моделей не версионируем, структуру папок — да
 data/raw/*
 data/processed/*
+data/cache/*
 models/*
 !**/.gitkeep

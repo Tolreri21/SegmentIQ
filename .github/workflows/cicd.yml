@@ -21,7 +21,7 @@ jobs:
       - name: install uv
         run: pip install uv
 
-      - name: install ruff
+      - name: install dependencies
         run: uv sync --frozen
 
       - name: check code quality
@@ -29,3 +29,23 @@ jobs:
 
       - name: check code format
         run: uv run ruff format --check
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: repo checkout
+        uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install uv
+        run: pip install uv
+
+      - name: install dependencies
+        run: uv sync --frozen
+
+      - name: run tests
+        run: uv run pytest -q

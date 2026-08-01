@@ -1,11 +1,40 @@
 # SegmentIQ
 
-RFM customer segmentation on online retail transaction data.
+RFM customer segmentation on online retail data.
 
-The project derives three per-customer metrics — **Recency** (days since last
-purchase), **Frequency** (number of purchases) and **Monetary** (total spend) —
-and groups customers into actionable segments, first by manual RFM scoring and
-then by KMeans clustering.
+Every customer gets three numbers: **Recency** (days since the last order),
+**Frequency** (number of orders) and **Monetary** (total spend). Customers are
+then split into segments twice, first by manual RFM scoring, then by KMeans, and
+the two results are compared.
+
+## Results
+
+Four clusters, medians per cluster:
+
+| cluster | recency | frequency | monetary | customers | revenue |
+|---------|---------|-----------|----------|-----------|---------|
+| Champions         | 8 days   | 10 | £3,542 | 16.2% | 64.2% |
+| Average customers | 51 days  | 4  | £1,320 | 27.4% | 24.1% |
+| New or small      | 19 days  | 2  | £409   | 20.0% | 5.0%  |
+| Churned           | 184 days | 1  | £294   | 36.4% | 6.6%  |
+
+16% of the customers bring 64% of the revenue. What to do with each of them:
+
+* **Champions**: keep them, do not sell harder. Loyalty program, early access, no
+  discounts. A Champion silent for a month is a warning sign.
+* **Average customers**: the best group to work with. They already buy often and
+  they are the closest to the Champions. Remind them every 50 days, cross-sell
+  what the Champions buy.
+* **New or small**: still active, so they are cheap to reach. Push them to the
+  second and the third order.
+* **Churned**: the biggest group, but only 6.6% of the money. One cheap email
+  campaign, and most of them will not come back.
+
+The manual scoring gives a similar picture, Bronze 33.4% of the customers with
+4.8% of the revenue against Gold 23.7% with 71.8%. The two methods agree on the
+best and the worst customers and disagree in the middle: what the scoring calls
+Silver splits into two clusters that look nothing alike, 4 orders and £1,320
+against 2 orders and £409.
 
 ## Stack
 
@@ -21,151 +50,83 @@ uv run pre-commit install   # enable git hooks
 ## Dataset
 
 [Online Retail](https://archive.ics.uci.edu/dataset/352/online+retail) (UCI
-Machine Learning Repository) — 541,909 transactions from a UK-based online
-retailer, 2010-12-01 to 2011-12-09.
+Machine Learning Repository), 541,909 transactions from a UK online retailer,
+2010-12-01 to 2011-12-09.
 
-Download `Online Retail.xlsx` and place it in `data/raw/`. Datasets are **not
-tracked in git** — `data/` and `models/` are gitignored, only their structure is
-kept via `.gitkeep`.
-
-Reading `.xlsx` requires `openpyxl` (a dev dependency, installed by `uv sync`).
+Download `Online Retail.xlsx` into `data/raw/`. Data and models are gitignored,
+only the folder structure is kept.
 
 ## Layout
 
 ```
-data/raw/          source dataset, untracked
-data/cache/        parquet cache of the raw file, untracked
-data/processed/    cleaned data and RFM tables, untracked
-notebooks/         exploration and analysis
-src/segmentiq/     reusable package code
-tests/             pytest suite
-models/            serialized models, untracked
+data/          raw file, parquet cache and processed tables, untracked
+notebooks/     the story: EDA, preprocessing, RFM, clustering
+src/segmentiq/ the code the notebooks call
+tests/         pytest suite
+models/        saved pipeline, untracked
 ```
 
-Every notebook keeps only the narrative: paths, plots and conclusions. Anything
-worth running twice lives in `src/segmentiq/`, one module per pipeline stage:
+Notebooks keep only paths, plots and conclusions. Anything worth running twice
+lives in the package, one module per step:
 
 ```
-data.py      load_raw, get_data         reading the xlsx and caching to parquet
-clean.py     clean_df                   cleaning
-rfm.py       create_rfm_table           per-customer features
-score.py     add_scores                 RFM scores and Bronze / Silver / Gold
-cluster.py   create_pipe                preprocessing + KMeans in one pipeline
+data.py      load_raw, get_data    read the xlsx, cache it as parquet
+clean.py     clean_df              cleaning
+rfm.py       create_rfm_table      per customer features
+score.py     add_scores            RFM scores and Bronze / Silver / Gold
+cluster.py   create_pipe           preprocessing and KMeans in one pipeline
 ```
 
-## Analysis
+## How it works
 
-The work is split by pull request, each one adds a stage of the pipeline.
+**Cleaning.** 135,080 rows have no `CustomerID` and are dropped. Service codes
+like `POST` and `BANK CHARGES` are not products, duplicates and four outlier
+invoices go as well. Cancellations are kept on purpose: their `Revenue` is
+negative, so they subtract themselves later instead of being guessed row by row.
+541,909 rows in, 399,689 out.
 
-### EDA (PR #2)
+**RFM table.** The snapshot date is the last order plus one day, so the newest
+customer gets `Recency = 1` and not 0. Recency and Frequency ignore
+cancellations, because a refund is not a visit. Monetary sums everything, so
+cancellations net out. Customers with no positive spend are dropped, the
+threshold is `> 0.1` and not `> 0` because five of them had values around 1e-15,
+pure floating point residue. Result: 4,320 customers.
 
-`notebooks/eda.ipynb`. First look at the raw file: 541,909 rows and 8 columns.
-Findings that shaped everything downstream:
+**Scoring.** Each metric gets a score from 1 to 4. Recency and Monetary use
+`qcut`, Frequency uses manual bins, because 34.6% of the customers bought exactly
+once and quantiles cannot split a tie that big. The sum gives Bronze, Silver and
+Gold.
 
-* 135,080 rows have no `CustomerID`, so they cannot be attributed to anyone
-* 9,288 rows are cancellations: their invoice number starts with `C` and the
-  `Quantity` is negative
-* some `StockCode` values are not products at all (`POST`, `M`, `DOT`, `D`,
-  `CRUK`, `C2`, `BANK CHARGES`)
-* four invoices are extreme outliers, including one order of 80,995 units and
-  its cancellation
+**Clustering.** `create_pipe(n_clusters)` returns one `Pipeline`: `log1p`, then
+`StandardScaler`, then `KMeans` with a fixed `random_state`. Without the
+logarithm a few huge spenders pull the centroids onto themselves. Without scaling
+Monetary in pounds outweighs Frequency in orders just because of the units.
+Keeping the steps in one pipeline is what guarantees the order.
 
-### Preprocessing (PR #3)
+`k = 4` comes from the elbow curve and is checked with silhouette, measured in
+the scaled space. The score peaks at `k = 2` and falls all the way down, which is
+what a continuum of customers looks like, but from 3 to 4 it drops only by 0.007.
+The fitted pipeline is saved with `joblib` to `models/kmeans.joblib`.
 
-`src/segmentiq/clean.py`, `notebooks/preprocessing.ipynb`.
+## Tests and CI
 
-`clean_df` drops rows without `CustomerID` and casts it to `int`, removes the
-service stock codes, drops full duplicates, removes the four outlier invoices
-and adds a `Revenue` column equal to `UnitPrice * Quantity`. Cancellations are
-deliberately **kept**: their `Revenue` is negative, so they subtract themselves
-later at aggregation instead of being guessed at row level.
+A 10 row fixture covers every case the cleaning has to handle: a duplicate, a
+missing `CustomerID`, a service code, an outlier invoice, a cancellation, a zero
+price and a float `CustomerID`. A second fixture with six obvious customers
+covers the pipeline. The tests check that cleaning drops the right rows, that a
+cancellation changes Monetary but not Recency and Frequency, and that loyal
+customers never land in the same cluster as churned ones.
 
-Result: 541,909 rows in, 399,689 rows and 9 columns out.
+CI runs on every pull request: `ruff check`, `ruff format --check` and `pytest`.
 
-### RFM table (PR #4)
+## Limitations
 
-`src/segmentiq/rfm.py`, `notebooks/rfm.ipynb`.
-
-`create_rfm_table` takes the snapshot date as the last `InvoiceDate` plus one
-day, so the most recent customer gets `Recency = 1` instead of 0. Recency and
-Frequency are computed on non-cancellation invoices only, because a refund is
-not a visit and not a purchase. Monetary sums `Revenue` over all rows, so
-cancellations net out. Customers whose net spend is not positive are dropped,
-with a `> 0.1` threshold rather than `> 0`: five of them survived a plain `> 0`
-filter with values around 1e-15, pure floating point residue from netting.
-
-Result: 4,320 customers with `Recency`, `Frequency` and `Monetary`.
-
-The notebook scores each metric from 1 to 4. Recency and Monetary use `qcut`,
-Frequency uses manual bins, because 34.6% of the customers bought exactly once
-and quantiles cannot split a tie that large. The sum of the three scores gives
-Bronze, Silver and Gold:
-
-| segment | customers | revenue |
-|---------|-----------|---------|
-| Gold    | 23.7%     | 71.8%   |
-| Silver  | 42.9%     | 23.4%   |
-| Bronze  | 33.4%     | 4.8%    |
-
-`src/segmentiq/score.py` packs the same rules into `add_scores`, so the clustering
-notebook can reuse them. The notebook keeps its own step by step version, because
-it is also the place where the tie problem in Frequency is discovered.
-
-### Tests and CI (PR #5)
-
-`tests/`, `.github/workflows/cicd.yml`.
-
-A 10 row fixture in `conftest.py` reproduces every case the cleaning has to
-handle: a duplicate row, a missing `CustomerID`, a service stock code, an
-outlier invoice, a cancellation, a zero price and a float `CustomerID`. The tests
-cover `clean_df` and `create_rfm_table`, including the rule that a cancellation
-changes Monetary but leaves Recency and Frequency alone.
-
-CI runs on every pull request in two jobs, `ruff check` plus `ruff format
---check`, and `pytest`.
-
-### Clustering (PR #6)
-
-`src/segmentiq/cluster.py`, `notebooks/clustering.ipynb`.
-
-`create_pipe(n_clusters)` returns a single `Pipeline`: `log1p`, then
-`StandardScaler`, then `KMeans` with a fixed `random_state`. The order matters
-and chaining the steps is what guarantees it. All three RFM distributions are
-heavily right skewed, and KMeans minimises squared distances, so without the
-logarithm a handful of customers with six figure spend pull the centroids onto
-themselves. Without scaling, Monetary in pounds outweighs Frequency in orders
-purely because of units.
-
-`k = 4` was chosen from the elbow curve and confirmed with silhouette. The
-score is highest at `k = 2` and falls monotonically, which is expected: RFM data
-is a continuum, not a set of separated blobs. From 3 to 4 it drops by 0.007, so
-the fourth cluster costs almost nothing in cohesion and buys a much more useful
-picture.
-
-Medians per cluster, because the tails survive even inside the clusters:
-
-| cluster | recency | frequency | monetary | customers | revenue |
-|---------|---------|-----------|----------|-----------|---------|
-| Champions          | 8 days   | 10 | £3,542 | 16.2% | 64.2% |
-| Average customers  | 51 days  | 4  | £1,320 | 27.4% | 24.1% |
-| New or small       | 19 days  | 2  | £409   | 20.0% | 5.0%  |
-| Churned            | 184 days | 1  | £294   | 36.4% | 6.6%  |
-
-16% of the customers bring 64% of the revenue.
-
-A second fixture, six customers with an obvious split, covers `create_pipe`: every
-customer gets a label, and the loyal ones never land in the same cluster as the
-churned ones.
-
-The clusters are then compared with the manual segments through a crosstab. The
-two methods agree on the edges, cluster 1 is 99.7% Gold and cluster 0 is 84.5%
-Bronze with no Gold at all, and disagree in the middle: Silver splits between two
-clusters that look nothing alike, 4 orders and £1,320 against 2 orders and £409.
-The bins were drawn by hand, KMeans found the borders in the data.
-
-The fitted pipeline is saved with `joblib` to `models/kmeans.joblib` (untracked),
-so preprocessing and model stay together and new customers can be assigned to a
-segment without running the notebook.
+* There is no date of the first order, so one segment stays ambiguous: new
+  customers and small ones look the same in the table.
+* The segments are not validated on a later period, so it is unknown whether they
+  predict anything.
+* The saved pipeline is not loaded back anywhere yet, the analysis runs from the
+  notebooks.
 
 ## Development
 
@@ -176,9 +137,9 @@ uv run pytest                # tests
 uv run pre-commit run --all-files
 ```
 
-Notebook outputs are stripped by `nbstripout` on commit, so the repository keeps
-code and prose only.
+`nbstripout` clears notebook outputs on commit, so the repository keeps code and
+text only.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

@@ -37,3 +37,16 @@ def raw_df():
     df = pd.DataFrame(ROWS, columns=COLUMNS)
     df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
     return df
+
+
+@pytest.fixture
+def rfm_df():
+    # three loyal customers and three churned ones
+    return pd.DataFrame(
+        {
+            "Recency": [5, 8, 12, 200, 250, 310],
+            "Frequency": [20, 18, 25, 1, 1, 2],
+            "Monetary": [9000.0, 8500.0, 11000.0, 120.0, 90.0, 200.0],
+        },
+        index=pd.Index([1, 2, 3, 4, 5, 6], name="CustomerID"),
+    )

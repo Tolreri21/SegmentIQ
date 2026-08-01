@@ -49,6 +49,7 @@ worth running twice lives in `src/segmentiq/`, one module per pipeline stage:
 data.py      load_raw, get_data         reading the xlsx and caching to parquet
 clean.py     clean_df                   cleaning
 rfm.py       create_rfm_table           per-customer features
+score.py     add_scores                 RFM scores and Bronze / Silver / Gold
 cluster.py   create_pipe                preprocessing + KMeans in one pipeline
 ```
 
@@ -106,15 +107,19 @@ Bronze, Silver and Gold:
 | Silver  | 42.9%     | 23.4%   |
 | Bronze  | 33.4%     | 4.8%    |
 
+`src/segmentiq/score.py` packs the same rules into `add_scores`, so the clustering
+notebook can reuse them. The notebook keeps its own step by step version, because
+it is also the place where the tie problem in Frequency is discovered.
+
 ### Tests and CI (PR #5)
 
 `tests/`, `.github/workflows/cicd.yml`.
 
 A 10 row fixture in `conftest.py` reproduces every case the cleaning has to
 handle: a duplicate row, a missing `CustomerID`, a service stock code, an
-outlier invoice, a cancellation, a zero price and a float `CustomerID`. Four
-tests cover `clean_df` and `create_rfm_table`, including the rule that a
-cancellation changes Monetary but leaves Recency and Frequency alone.
+outlier invoice, a cancellation, a zero price and a float `CustomerID`. The tests
+cover `clean_df` and `create_rfm_table`, including the rule that a cancellation
+changes Monetary but leaves Recency and Frequency alone.
 
 CI runs on every pull request in two jobs, `ruff check` plus `ruff format
 --check`, and `pytest`.
@@ -147,6 +152,20 @@ Medians per cluster, because the tails survive even inside the clusters:
 | Churned            | 184 days | 1  | £294   | 36.4% | 6.6%  |
 
 16% of the customers bring 64% of the revenue.
+
+A second fixture, six customers with an obvious split, covers `create_pipe`: every
+customer gets a label, and the loyal ones never land in the same cluster as the
+churned ones.
+
+The clusters are then compared with the manual segments through a crosstab. The
+two methods agree on the edges, cluster 1 is 99.7% Gold and cluster 0 is 84.5%
+Bronze with no Gold at all, and disagree in the middle: Silver splits between two
+clusters that look nothing alike, 4 orders and £1,320 against 2 orders and £409.
+The bins were drawn by hand, KMeans found the borders in the data.
+
+The fitted pipeline is saved with `joblib` to `models/kmeans.joblib` (untracked),
+so preprocessing and model stay together and new customers can be assigned to a
+segment without running the notebook.
 
 ## Development
 

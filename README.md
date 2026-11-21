@@ -7,6 +7,13 @@ Every customer gets three numbers: **Recency** (days since the last order),
 then split into segments twice, first by manual RFM scoring, then by KMeans, and
 the two results are compared.
 
+![SegmentIQ demo: transactions become RFM rows, KMeans colors 4,320 customers into four segments, each segment gets one action](docs/demo.gif)
+
+The pipeline in one clip: transactions collapse into RFM rows, KMeans colors all 4,320 customers,
+the revenue split shows who brings the money, and every segment gets its action
+([mp4 with sound](docs/demo.mp4)). The rows, dots, KMeans iterations and numbers come from a run of
+`src/segmentiq` on the dataset.
+
 ## Results
 
 Four clusters, medians per cluster:
